@@ -34,9 +34,19 @@ def log_step(step, n_rows):
 def save_attrition():
     pd.DataFrame(attrition).to_csv("outputs/attrition_table.csv", index=False)
 
+# Define trip data parameters
+TRIP_COLUMNS = ["started_at", "member_casual", "start_station_id", "start_lat", "start_lng"]
+START_DATE = "2026-06-01"      # first day of the analysis period
+END_DATE = "2026-09-01"        # the day AFTER the last day, so trips must start before this
+EXCLUDED_DATE = "2026-07-03"   # Observed Independence Day holiday, not a normal commuting day
+AM_START_HOUR = 7              # morning window: trips starting 7:00 to 9:59
+AM_END_HOUR = 10
+PM_START_HOUR = 16             # evening window: trips starting 16:00 to 19:59
+PM_END_HOUR = 20
+
 print("1. INGESTING & COMBINING CITI BIKE CHUNKS")
 # Catch all chunked monthly CSV files
-trip_files = glob.glob("data/*-citibike-tripdata*.csv")
+trip_files = glob.glob("data/2026*-citibike-tripdata*.csv")
 
 if not trip_files:
     raise FileNotFoundError("No Citi Bike trip CSV files found in 'data/'. Verify folder.")
@@ -44,13 +54,17 @@ if not trip_files:
 print(f"Found {len(trip_files)} chunked files. Loading and combining...")
 
 # Read and combine all chunks into one master dataframe
-trip_dfs = [pd.read_csv(file, low_memory=False) for file in trip_files]
+# usecols added to ensure only the columns I need for my analysis are read
+trip_dfs = [
+    pd.read_csv(file, usecols=TRIP_COLUMNS, dtype={"start_station_id": str}, low_memory=False)
+    for file in trip_files
+]
 master_trips = pd.concat(trip_dfs, ignore_index=True)
 print(f"Successfully combined! Total raw trip records across all chunks: {len(master_trips):,}")
 
-print("\n2. AGGREGATING RIDERSHIP BY STATION")
-station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
-print(f"Aggregated into {len(station_ridership):,} unique stations with recorded trips.")
+# print("\n2. AGGREGATING RIDERSHIP BY STATION")
+# station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
+# print(f"Aggregated into {len(station_ridership):,} unique stations with recorded trips.")
 
 print("\n3. LOADING INFRASTRUCTURE METRICS")
 # Point directly to infrastructure file
