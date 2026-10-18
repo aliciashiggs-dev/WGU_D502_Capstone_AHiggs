@@ -1,10 +1,38 @@
 import os
 import glob
+import logging
 import pandas as pd
 import statsmodels.formula.api as smf
 
-# Make sure outputs directory exists
+# Make sure outputs directory exists (must happen before logging opens its file in outputs/)
 os.makedirs("outputs", exist_ok=True)
+
+# Set up logging to see changes as I work through the analysis and write a timestamped record to outputs/pipeline_log.txt.
+# Prints to console. Each run starts a fresh log file because mode="w"
+# Note to self to review after running analysis for Task 2 governance evidence.
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s | %(message)s",
+    handlers=[
+        logging.FileHandler("outputs/pipeline_log.txt", mode="w"),
+        logging.StreamHandler(),
+    ],
+)
+
+# Set up attrition List.
+# This is an empty list that collects one entry per step
+attrition = []
+
+# This function appends attrition for each step of the analysis with the number of rows after that step is completed
+# and writes a log message in console output and log file.
+def log_step(step, n_rows):
+    logging.info(f"{step}: {n_rows:,} rows")
+    attrition.append({"step": step, "rows": n_rows})
+
+# Define save_attrition function to convert attrition list into a table and save to outputs/attrition_table.csv
+# Note to self: Call once at the end, when attrition holds every step. Each call rewrites the entire file.
+def save_attrition():
+    pd.DataFrame(attrition).to_csv("outputs/attrition_table.csv", index=False)
 
 print("1. INGESTING & COMBINING CITI BIKE CHUNKS")
 # Catch all chunked monthly CSV files
@@ -35,3 +63,10 @@ if not os.path.exists(infra_path):
 infra_df = pd.read_csv(infra_path, low_memory=False)
 print(f"Loaded infrastructure dataset with {len(infra_df):,} rows.")
 print("Infrastructure columns found:", infra_df.columns.tolist())
+
+# # Test that helper items work as expected
+# # Highlight & # out above code & run main.py to test logging helpers in lines 10:35
+# log_step("test step A", 1000)
+# log_step("test step B", 750)
+# log_step("test step B", 750)
+# save_attrition()
