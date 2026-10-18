@@ -45,7 +45,7 @@ PM_START_HOUR = 16             # evening window: trips starting 16:00 to 19:59
 PM_END_HOUR = 20
 
 print("1. INGESTING & COMBINING CITI BIKE CHUNKS")
-# Catch all chunked monthly CSV files
+# Find the 2026 chunked monthly CSV files
 trip_files = glob.glob("data/2026*-citibike-tripdata*.csv")
 
 if not trip_files:
@@ -60,7 +60,9 @@ trip_dfs = [
     for file in trip_files
 ]
 master_trips = pd.concat(trip_dfs, ignore_index=True)
-print(f"Successfully combined! Total raw trip records across all chunks: {len(master_trips):,}")
+
+# add a line to attrition to show result of combining data chunks
+log_step("raw trips, all 2026 files", len(master_trips))
 
 # print("\n2. AGGREGATING RIDERSHIP BY STATION")
 # station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
@@ -77,6 +79,9 @@ if not os.path.exists(infra_path):
 infra_df = pd.read_csv(infra_path, low_memory=False)
 print(f"Loaded infrastructure dataset with {len(infra_df):,} rows.")
 print("Infrastructure columns found:", infra_df.columns.tolist())
+
+# Call save_attrition at end of code to ensure all log steps are saved for the analysis
+save_attrition()
 
 # # Test that helper items work as expected
 # # Highlight & # out above code & run main.py to test logging helpers in lines 10:35
