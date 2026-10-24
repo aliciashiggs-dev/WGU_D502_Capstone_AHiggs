@@ -54,7 +54,7 @@ if not trip_files:
 print(f"Found {len(trip_files)} chunked files. Loading and combining...")
 
 # Read and combine all chunks into one master dataframe
-# usecols added to ensure only the columns I need for my analysis are read
+# usecols added to read only the columns I need for my analysis
 trip_dfs = [
     pd.read_csv(file, usecols=TRIP_COLUMNS, dtype={"start_station_id": str}, low_memory=False)
     for file in trip_files
@@ -63,6 +63,34 @@ master_trips = pd.concat(trip_dfs, ignore_index=True)
 
 # add a line to attrition to show result of combining data chunks
 log_step("raw trips, all 2026 files", len(master_trips))
+
+master_trips["started_at"] = pd.to_datetime(master_trips["started_at"], format="mixed")
+# Keep only trips that started inside the analysis period
+master_trips = master_trips[(master_trips["started_at"] >= START_DATE) & (master_trips["started_at"] < END_DATE)]
+log_step("started Jun 1 - Aug 31, 2026", len(master_trips))
+
+# Keep weekdays only, Monday-Friday
+master_trips = master_trips[master_trips["started_at"].dt.dayofweek < 5]
+log_step("weekdays only (Mon-Fri)", len(master_trips))
+
+# Keep annual members only
+master_trips = master_trips[master_trips["member_casual"] == "member"]
+log_step("members only", len(master_trips))
+
+# Drop excluded holiday, July 3
+master_trips = master_trips[master_trips["started_at"].dt.normalize() != pd.Timestamp(EXCLUDED_DATE)]
+log_step("excluded July 3 holiday", len(master_trips))
+
+# Keep peak commute hours: morning and evening windows
+hour = master_trips["started_at"].dt.hour
+in_am = (hour >= AM_START_HOUR) & (hour < AM_END_HOUR)
+in_pm = (hour >= PM_START_HOUR) & (hour < PM_END_HOUR)
+master_trips = master_trips[in_am | in_pm]
+log_step("peak hours (7-10 and 16-20)", len(master_trips))
+
+# check formatting for start times
+# print(master_trips["started_at"].dtype)
+# print(master_trips["started_at"].head())
 
 # print("\n2. AGGREGATING RIDERSHIP BY STATION")
 # station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
