@@ -7,6 +7,8 @@ import shapely
 from shapely import wkt
 import numpy as np
 from pyproj import Transformer
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # Make sure outputs directory exists (must happen before logging opens its file in outputs/)
 os.makedirs("outputs", exist_ok=True)
@@ -234,6 +236,36 @@ district_data[["miles", "lane_density"]] = district_data[["miles", "lane_density
 
 district_data.to_csv("outputs/district_data.csv", index=False)
 logging.info(f"district table saved: {len(district_data)} rows")
+
+# Exploratory data analysis (EDA): summary statistics for the two model variables
+summary = district_data[["daily_trips", "lane_density"]].describe().round(2)
+print("\n4. SUMMARY STATISTICS")
+print(summary)
+summary.to_csv("outputs/summary_statistics.csv")
+
+# Histograms: the shape of each variable
+fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+sns.histplot(data=district_data, x="daily_trips", bins=15, ax=axes[0])
+axes[0].set_title("Average weekday peak trips per district")
+axes[0].set_xlabel("Daily peak trips")
+axes[0].set_ylabel("Number of districts")
+sns.histplot(data=district_data, x="lane_density", bins=15, ax=axes[1])
+axes[1].set_title("Protected lane density per district")
+axes[1].set_xlabel("Protected miles per square mile of land")
+axes[1].set_ylabel("Number of districts")
+plt.tight_layout()
+plt.savefig("outputs/fig_distributions.png", dpi=150)
+plt.close()
+
+# Scatter plot: lane density (X) vs. daily peak trips (Y), one dot per district
+fig, ax = plt.subplots(figsize=(7, 5))
+sns.scatterplot(data=district_data, x="lane_density", y="daily_trips", ax=ax)
+ax.set_title("Protected lane density vs. weekday peak trips, by district")
+ax.set_xlabel("Protected miles per square mile of land")
+ax.set_ylabel("Average weekday peak trips (member riders)")
+plt.tight_layout()
+plt.savefig("outputs/fig_scatter.png", dpi=150)
+plt.close()
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
