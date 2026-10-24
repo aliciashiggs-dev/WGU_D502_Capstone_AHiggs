@@ -3,6 +3,9 @@ import glob
 import logging
 import pandas as pd
 import statsmodels.formula.api as smf
+import shapely
+from shapely import wkt
+
 
 # Make sure outputs directory exists (must happen before logging opens its file in outputs/)
 os.makedirs("outputs", exist_ok=True)
@@ -43,6 +46,7 @@ AM_START_HOUR = 7              # morning window: trips starting 7:00 to 9:59
 AM_END_HOUR = 10
 PM_START_HOUR = 16             # evening window: trips starting 16:00 to 19:59
 PM_END_HOUR = 20
+DISTRICT_FILE = "data/Community_Districts_(Water_areas_included)_20261017.csv"   # water-areas version
 
 print("1. INGESTING & COMBINING CITI BIKE CHUNKS")
 # Find the 2026 chunked monthly CSV files
@@ -105,6 +109,39 @@ logging.info(f"unique start stations: {len(stations):,}")
 # check formatting for start times
 # print(master_trips["started_at"].dtype)
 # print(master_trips["started_at"].head())
+
+# Load the Community District boundaries (water-areas version) and turn each outline into a shape
+districts = pd.read_csv(DISTRICT_FILE)
+districts["geometry"] = districts["the_geom"].apply(wkt.loads)
+logging.info(f"district boundaries loaded: {len(districts)} rows")
+
+# Check districts
+# print(districts[["BoroCD", "geometry"]].head(3))
+# print(districts["geometry"].iloc[0].geom_type)
+
+# Find which district each station is in: test all stations against one district at a time
+stations["district"] = float("nan")
+for _, row in districts.iterrows():
+    inside = shapely.contains_xy(row["geometry"], stations["lng"], stations["lat"])
+    stations.loc[inside, "district"] = row["BoroCD"]
+logging.info(f"stations with no district: {stations['district'].isna().sum()}")
+
+# Drop stations in Joint Interest Areas
+# The last two digits of BoroCD are the district number; above 25 marks a JIA.
+is_jia = stations["district"] % 100 > 25
+logging.info(f"stations in JIAs dropped: {is_jia.sum()}")
+stations = stations[~is_jia]
+log_step("dropped stations in JIAs", stations["trips"].sum())
+logging.info(f"stations remaining: {len(stations):,}")
+
+# Add up trips per district and convert to average weekday peak trips
+n_weekdays = master_trips["started_at"].dt.normalize().nunique()
+logging.info(f"weekdays in analysis period: {n_weekdays}")
+
+district_trips = stations.groupby("district")["trips"].sum().reset_index()
+district_trips["district"] = district_trips["district"].astype(int)
+district_trips["daily_trips"] = district_trips["trips"] / n_weekdays
+logging.info(f"districts with trips: {len(district_trips)}")
 
 # print("\n2. AGGREGATING RIDERSHIP BY STATION")
 # station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
