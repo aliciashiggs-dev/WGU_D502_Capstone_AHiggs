@@ -7,6 +7,8 @@ import shapely
 from shapely import wkt
 import numpy as np
 from pyproj import Transformer
+import matplotlib
+matplotlib.use("Agg")   # save figures to files only; no pop-up windows (avoids a Tk/Tcl error)
 import matplotlib.pyplot as plt
 import seaborn as sns
 
@@ -266,6 +268,21 @@ ax.set_ylabel("Average weekday peak trips (member riders)")
 plt.tight_layout()
 plt.savefig("outputs/fig_scatter.png", dpi=150)
 plt.close()
+
+# Fit the simple linear regression (OLS): daily_trips depends on lane_density
+model = smf.ols("daily_trips ~ lane_density", data=district_data).fit()
+print("\n5. OLS REGRESSION RESULTS")
+print(model.summary())
+with open("outputs/model_summary.txt", "w") as f:
+    f.write(model.summary().as_text())
+
+# The key results from the model
+slope = model.params["lane_density"]
+intercept = model.params["Intercept"]
+p_value = model.pvalues["lane_density"]
+r_squared = model.rsquared
+rmse = np.sqrt((model.resid ** 2).mean())
+logging.info(f"OLS: slope={slope:.2f}, intercept={intercept:.2f}, p-value={p_value:.2e}, R-squared={r_squared:.3f}, RMSE={rmse:.1f}, n={int(model.nobs)}")
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
