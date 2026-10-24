@@ -64,7 +64,9 @@ master_trips = pd.concat(trip_dfs, ignore_index=True)
 # add a line to attrition to show result of combining data chunks
 log_step("raw trips, all 2026 files", len(master_trips))
 
+# Convert started_at from text to date/time so that I can filter by date, weekday, and hour
 master_trips["started_at"] = pd.to_datetime(master_trips["started_at"], format="mixed")
+
 # Keep only trips that started inside the analysis period
 master_trips = master_trips[(master_trips["started_at"] >= START_DATE) & (master_trips["started_at"] < END_DATE)]
 log_step("started Jun 1 - Aug 31, 2026", len(master_trips))
@@ -87,6 +89,18 @@ in_am = (hour >= AM_START_HOUR) & (hour < AM_END_HOUR)
 in_pm = (hour >= PM_START_HOUR) & (hour < PM_END_HOUR)
 master_trips = master_trips[in_am | in_pm]
 log_step("peak hours (7-10 and 16-20)", len(master_trips))
+
+# Drop trips with no start station or location that cannot be mapped to a district
+master_trips = master_trips.dropna(subset=["start_station_id", "start_lat", "start_lng"])
+log_step("dropped trips with no start station", len(master_trips))
+
+# One row per start station: trip count and location
+stations = master_trips.groupby("start_station_id").agg(
+    trips=("start_lat", "size"),
+    lat=("start_lat", "first"),
+    lng=("start_lng", "first"),
+).reset_index()
+logging.info(f"unique start stations: {len(stations):,}")
 
 # check formatting for start times
 # print(master_trips["started_at"].dtype)
