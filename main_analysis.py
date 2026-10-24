@@ -214,15 +214,26 @@ lane_miles = protected.groupby("district")["miles"].sum().reset_index()
 lane_miles["district"] = lane_miles["district"].astype(int)
 logging.info(f"districts with protected lanes: {len(lane_miles)}")
 
-# Protected lane density = protected miles per square mile of LAND area (decision #10)
+# Protected lane density = protected miles per square mile of LAND area
 # The water-areas file's area includes water, so land area comes from the standard file.
 land_area = pd.read_csv(LAND_AREA_FILE)
-# Shape_Area is text with commas (e.g. "172,077,374.82") in square feet; 27,878,400 sq ft = 1 sq mile
+# Shape_Area is text with commas (ex: "172,077,374.82") in square feet: 27,878,400 sq ft = 1 sq mile
 land_area["land_sq_miles"] = land_area["Shape_Area"].str.replace(",", "", regex=False).astype(float) / 27_878_400
 land_area = land_area[["BoroCd", "land_sq_miles"]].rename(columns={"BoroCd": "district"})
 lane_miles = lane_miles.merge(land_area, on="district", how="left")
 lane_miles["lane_density"] = lane_miles["miles"] / lane_miles["land_sq_miles"]
 logging.info(f"districts missing land area: {lane_miles['land_sq_miles'].isna().sum()}")
+
+# Build the district table: one row per district with trips (Y) and lane density (X)
+district_data = district_trips.merge(
+    lane_miles[["district", "miles", "lane_density"]], on="district", how="left"
+)
+no_lanes = district_data["lane_density"].isna()
+logging.info(f"districts with trips but no protected lanes (set to 0): {district_data.loc[no_lanes, 'district'].tolist()}")
+district_data[["miles", "lane_density"]] = district_data[["miles", "lane_density"]].fillna(0)
+
+district_data.to_csv("outputs/district_data.csv", index=False)
+logging.info(f"district table saved: {len(district_data)} rows")
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
