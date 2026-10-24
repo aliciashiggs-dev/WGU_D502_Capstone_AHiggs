@@ -5,7 +5,8 @@ import pandas as pd
 import statsmodels.formula.api as smf
 import shapely
 from shapely import wkt
-
+import numpy as np
+from pyproj import Transformer
 
 # Make sure outputs directory exists (must happen before logging opens its file in outputs/)
 os.makedirs("outputs", exist_ok=True)
@@ -47,6 +48,10 @@ AM_END_HOUR = 10
 PM_START_HOUR = 16             # evening window: trips starting 16:00 to 19:59
 PM_END_HOUR = 20
 DISTRICT_FILE = "data/Community_Districts_(Water_areas_included)_20261017.csv"   # water-areas version
+LAND_AREA_FILE = "data/NYC_districts.csv"   # standard version, used only for district land area (decision #10)
+
+# Converts lon/lat degrees (EPSG:4326) to NY State Plane feet (EPSG:2263), decision #11
+TRANSFORMER = Transformer.from_crs(4326, 2263, always_xy=True)
 
 print("1. INGESTING & COMBINING CITI BIKE CHUNKS")
 # Find the 2026 chunked monthly CSV files
@@ -156,8 +161,68 @@ if not os.path.exists(infra_path):
     infra_path = alt_infra[0] if alt_infra else infra_path
 
 infra_df = pd.read_csv(infra_path, low_memory=False)
-print(f"Loaded infrastructure dataset with {len(infra_df):,} rows.")
-print("Infrastructure columns found:", infra_df.columns.tolist())
+# Check loaded rows and columns
+# print(f"Loaded infrastructure dataset with {len(infra_df):,} rows.")
+# print("Infrastructure columns found:", infra_df.columns.tolist())
+
+logging.info(f"bike routes loaded: {len(infra_df):,} segments")
+
+# Keep current, protected segments: "Protected" in either direction column
+is_current = infra_df["status"] == "Current"
+is_protected = (infra_df["ft_facilit"] == "Protected") | (infra_df["tf_facilit"] == "Protected")
+protected = infra_df[is_current & is_protected].copy()
+logging.info(f"protected current segments: {len(protected):,}")
+
+# Turn each segment's outline text into a shape, and drop the few segments that have no shape
+protected["geometry"] = protected["the_geom"].apply(wkt.loads)
+has_shape = ~shapely.is_empty(protected["geometry"])
+logging.info(f"segments with empty geometry dropped: {(~has_shape).sum()}")
+protected = protected[has_shape].copy()
+
+# Measure each segment's length in miles (decision #11)
+def to_feet(coords):
+    x, y = TRANSFORMER.transform(coords[:, 0], coords[:, 1])
+    return np.column_stack((x, y))
+
+def length_in_miles(geom):
+    return shapely.transform(geom, to_feet).length / 5280
+
+protected["miles"] = protected["geometry"].apply(length_in_miles)
+logging.info(f"total protected miles: {protected['miles'].sum():.1f}")
+
+# Find each segment's midpoint (decision #12): merge the single-part line, then take the point halfway along it
+lines = shapely.line_merge(protected["geometry"].values)
+midpoints = shapely.line_interpolate_point(lines, 0.5, normalized=True)
+mid_x = shapely.get_x(midpoints)
+mid_y = shapely.get_y(midpoints)
+
+# Find which district each midpoint is in, one district at a time (same method as for stations)
+protected["district"] = float("nan")
+for _, row in districts.iterrows():
+    inside = shapely.contains_xy(row["geometry"], mid_x, mid_y)
+    protected.loc[inside, "district"] = row["BoroCD"]
+logging.info(f"protected segments with no district: {protected['district'].isna().sum()}")
+
+# Drop segments with no district and segments in JIAs
+is_jia = protected["district"] % 100 > 25
+logging.info(f"protected segments in JIAs dropped: {is_jia.sum()}")
+protected = protected[protected["district"].notna() & ~is_jia]
+logging.info(f"protected segments kept: {len(protected):,} ({protected['miles'].sum():.1f} miles)")
+
+# Add up protected miles per district
+lane_miles = protected.groupby("district")["miles"].sum().reset_index()
+lane_miles["district"] = lane_miles["district"].astype(int)
+logging.info(f"districts with protected lanes: {len(lane_miles)}")
+
+# Protected lane density = protected miles per square mile of LAND area (decision #10)
+# The water-areas file's area includes water, so land area comes from the standard file.
+land_area = pd.read_csv(LAND_AREA_FILE)
+# Shape_Area is text with commas (e.g. "172,077,374.82") in square feet; 27,878,400 sq ft = 1 sq mile
+land_area["land_sq_miles"] = land_area["Shape_Area"].str.replace(",", "", regex=False).astype(float) / 27_878_400
+land_area = land_area[["BoroCd", "land_sq_miles"]].rename(columns={"BoroCd": "district"})
+lane_miles = lane_miles.merge(land_area, on="district", how="left")
+lane_miles["lane_density"] = lane_miles["miles"] / lane_miles["land_sq_miles"]
+logging.info(f"districts missing land area: {lane_miles['land_sq_miles'].isna().sum()}")
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
