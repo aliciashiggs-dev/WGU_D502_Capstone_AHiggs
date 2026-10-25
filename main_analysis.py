@@ -1,3 +1,9 @@
+# D502 Capstone: do protected bike lanes predict weekday commuter ridership in NYC Community Districts?
+# Inputs (data/): Citi Bike 2026 trip files, NYC DOT Bike Routes, NYC DCP Community District boundaries (two versions).
+# Steps: filter trips (weekday member peak hours, Jun-Aug 2026) -> assign stations and lane segments to districts
+#        -> build a 40-district table -> fit OLS (daily peak trips ~ protected lane density) -> check assumptions.
+# Outputs (outputs/): district_data.csv, attrition_table.csv, pipeline_log.txt, model summaries, figures.
+
 import os
 import glob
 import logging
@@ -55,6 +61,7 @@ PM_START_HOUR = 16             # evening window: trips starting 16:00 to 19:59
 PM_END_HOUR = 20
 DISTRICT_FILE = "data/Community_Districts_(Water_areas_included)_20261017.csv"   # water-areas version
 LAND_AREA_FILE = "data/NYC_districts.csv"   # standard version, used only for district land area (decision #10)
+INFRA_FILE = "data/New_York_City_Bike_Routes_20261017.csv"   # NYC DOT bike routes
 
 # Converts lon/lat degrees (EPSG:4326) to NY State Plane feet (EPSG:2263), decision #11
 TRANSFORMER = Transformer.from_crs(4326, 2263, always_xy=True)
@@ -117,18 +124,10 @@ stations = master_trips.groupby("start_station_id").agg(
 ).reset_index()
 logging.info(f"unique start stations: {len(stations):,}")
 
-# check formatting for start times
-# print(master_trips["started_at"].dtype)
-# print(master_trips["started_at"].head())
-
 # Load the Community District boundaries (water-areas version) and turn each outline into a shape
 districts = pd.read_csv(DISTRICT_FILE)
 districts["geometry"] = districts["the_geom"].apply(wkt.loads)
 logging.info(f"district boundaries loaded: {len(districts)} rows")
-
-# Check districts
-# print(districts[["BoroCD", "geometry"]].head(3))
-# print(districts["geometry"].iloc[0].geom_type)
 
 # Find which district each station is in: test all stations against one district at a time
 stations["district"] = float("nan")
@@ -154,23 +153,8 @@ district_trips["district"] = district_trips["district"].astype(int)
 district_trips["daily_trips"] = district_trips["trips"] / n_weekdays
 logging.info(f"districts with trips: {len(district_trips)}")
 
-# print("\n2. AGGREGATING RIDERSHIP BY STATION")
-# station_ridership = master_trips.groupby(['start_station_id', 'start_station_name']).size().reset_index(name='total_ridership')
-# print(f"Aggregated into {len(station_ridership):,} unique stations with recorded trips.")
-
-print("\n3. LOADING INFRASTRUCTURE METRICS")
-# Point directly to infrastructure file
-infra_path = "data/New_York_City_Bike_Routes_20261017.csv"
-if not os.path.exists(infra_path):
-    # Fallback search if file extension differs
-    alt_infra = glob.glob("data/New_York_City_Bike_Routes*.csv")
-    infra_path = alt_infra[0] if alt_infra else infra_path
-
-infra_df = pd.read_csv(infra_path, low_memory=False)
-# Check loaded rows and columns
-# print(f"Loaded infrastructure dataset with {len(infra_df):,} rows.")
-# print("Infrastructure columns found:", infra_df.columns.tolist())
-
+print("\n2. LOADING INFRASTRUCTURE METRICS")
+infra_df = pd.read_csv(INFRA_FILE, low_memory=False)
 logging.info(f"bike routes loaded: {len(infra_df):,} segments")
 
 # Keep current, protected segments: "Protected" in either direction column
@@ -243,7 +227,7 @@ logging.info(f"district table saved: {len(district_data)} rows")
 
 # Exploratory data analysis (EDA): summary statistics for the two model variables
 summary = district_data[["daily_trips", "lane_density"]].describe().round(2)
-print("\n4. SUMMARY STATISTICS")
+print("\n3. SUMMARY STATISTICS")
 print(summary)
 summary.to_csv("outputs/summary_statistics.csv")
 
@@ -261,19 +245,9 @@ plt.tight_layout()
 plt.savefig("outputs/fig_distributions.png", dpi=150)
 plt.close()
 
-# Scatter plot: lane density (X) vs. daily peak trips (Y), one dot per district
-fig, ax = plt.subplots(figsize=(7, 5))
-sns.scatterplot(data=district_data, x="lane_density", y="daily_trips", ax=ax)
-ax.set_title("Protected lane density vs. weekday peak trips, by district")
-ax.set_xlabel("Protected miles per square mile of land")
-ax.set_ylabel("Average weekday peak trips (member riders)")
-plt.tight_layout()
-plt.savefig("outputs/fig_scatter.png", dpi=150)
-plt.close()
-
 # Fit the simple linear regression (OLS): daily_trips depends on lane_density
 model = smf.ols("daily_trips ~ lane_density", data=district_data).fit()
-print("\n5. OLS REGRESSION RESULTS")
+print("\n4. OLS REGRESSION RESULTS")
 print(model.summary())
 with open("outputs/model_summary.txt", "w") as f:
     f.write(model.summary().as_text())
@@ -337,10 +311,3 @@ plt.close()
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
-
-# # Test that helper items work as expected
-# # Highlight & # out above code & run main.py to test logging helpers in lines 10:35
-# log_step("test step A", 1000)
-# log_step("test step B", 750)
-# log_step("test step B", 750)
-# save_attrition()
