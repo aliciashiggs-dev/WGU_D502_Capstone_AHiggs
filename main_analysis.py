@@ -11,6 +11,8 @@ import matplotlib
 matplotlib.use("Agg")   # save figures to files only; no pop-up windows (avoids a Tk/Tcl error)
 import matplotlib.pyplot as plt
 import seaborn as sns
+from statsmodels.stats.diagnostic import het_breuschpagan
+from scipy import stats
 
 # Make sure outputs directory exists (must happen before logging opens its file in outputs/)
 os.makedirs("outputs", exist_ok=True)
@@ -283,6 +285,55 @@ p_value = model.pvalues["lane_density"]
 r_squared = model.rsquared
 rmse = np.sqrt((model.resid ** 2).mean())
 logging.info(f"OLS: slope={slope:.2f}, intercept={intercept:.2f}, p-value={p_value:.2e}, R-squared={r_squared:.3f}, RMSE={rmse:.1f}, n={int(model.nobs)}")
+
+# Residual plot: check linearity and constant spread
+fig, ax = plt.subplots(figsize=(7, 5))
+sns.scatterplot(x=model.fittedvalues, y=model.resid, ax=ax)
+ax.axhline(0, color="gray", linestyle="--")
+ax.set_title("Residuals vs. fitted values")
+ax.set_xlabel("Fitted (predicted) daily peak trips")
+ax.set_ylabel("Residual (actual minus predicted)")
+plt.tight_layout()
+plt.savefig("outputs/fig_residuals.png", dpi=150)
+plt.close()
+
+# Formal assumption tests
+bp_stat, bp_p, bp_f, bp_f_p = het_breuschpagan(model.resid, model.model.exog)
+sw_stat, sw_p = stats.shapiro(model.resid)
+logging.info(f"Breusch-Pagan (constant spread) p-value: {bp_p:.4f}")
+logging.info(f"Shapiro-Wilk (normal residuals) p-value: {sw_p:.4f}")
+
+# Robustness check: same model, but standard errors that do not assume steady spread (HC3)
+model_robust = smf.ols("daily_trips ~ lane_density", data=district_data).fit(cov_type="HC3")
+robust_low, robust_high = model_robust.conf_int().loc["lane_density"]
+logging.info(f"Robust (HC3): slope={model_robust.params['lane_density']:.2f}, std err={model_robust.bse['lane_density']:.2f}, p-value={model_robust.pvalues['lane_density']:.2e}, 95% CI [{robust_low:.0f}, {robust_high:.0f}]")
+with open("outputs/model_summary_robust.txt", "w") as f:
+    f.write(model_robust.summary().as_text())
+
+# Influence: which districts have the most pull on the fitted line (Cook's distance)
+influence = model.get_influence()
+district_data["cooks_d"] = influence.cooks_distance[0]
+threshold = 4 / len(district_data)
+influential = district_data[district_data["cooks_d"] > threshold].sort_values("cooks_d", ascending=False)
+logging.info(f"Cook's distance threshold (4/n): {threshold:.2f}; districts above it: {influential['district'].tolist()}")
+influential[["district", "daily_trips", "lane_density", "cooks_d"]].round(2).to_csv("outputs/influential_districts.csv", index=False)
+
+# Final figure: scatter plot with the OLS line, influential districts labeled
+fig, ax = plt.subplots(figsize=(8, 5.5))
+sns.scatterplot(data=district_data, x="lane_density", y="daily_trips", ax=ax)
+x_line = np.linspace(0, district_data["lane_density"].max(), 100)
+ax.plot(x_line, intercept + slope * x_line, color="red",
+        label=f"OLS line (slope = {slope:.0f}, R² = {r_squared:.2f})")
+for _, row in influential.iterrows():
+    ax.annotate(int(row["district"]), (row["lane_density"], row["daily_trips"]),
+                textcoords="offset points", xytext=(5, 5), fontsize=9)
+ax.set_title("Protected lane density vs. weekday peak trips, by district")
+ax.set_xlabel("Protected miles per square mile of land")
+ax.set_ylabel("Average weekday peak trips (member riders)")
+ax.legend()
+plt.tight_layout()
+plt.savefig("outputs/fig_scatter_line.png", dpi=150)
+plt.close()
 
 # Call save_attrition at end of code to ensure all log steps are saved for the analysis
 save_attrition()
